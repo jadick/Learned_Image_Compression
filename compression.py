@@ -9,6 +9,7 @@ from math import log10, sqrt
 from collections import defaultdict
 import cv2
 import numpy as np
+import pandas as pd
 
 def parse_arguments():
     parser = argparse.ArgumentParser(prog='compression',
@@ -50,7 +51,6 @@ def is_rgb_psnr(path_original,path_recons):
     psnr = 20 * log10(max_pixel / sqrt(mse))
     return psnr
 
-
 def is_y_psnr(path_original,path_recons):
     original = cv2.cvtColor(cv2.imread(path_original, 1), cv2.COLOR_BGR2YCR_CB)#Abre imagens em BGR
     compressed = cv2.cvtColor(cv2.imread(path_recons, 1), cv2.COLOR_BGR2YCR_CB)#e traduz para Y'CrCb
@@ -73,14 +73,14 @@ def is_ycrcb_psnr(path_original,path_recons):
     psnr = 20 * log10(max_pixel / sqrt(mse))
     return psnr
 
-def is_psnr(path_original,path_recons):
-    im1 = tf.io.decode_png(open(path_original,'rb').read(),channels=3)
-    im2 = tf.io.decode_png(open(path_recons,'rb').read(),channels=3)
-    im1 = tf.image.convert_image_dtype(im1, tf.float32)
-    im2 = tf.image.convert_image_dtype(im2, tf.float32)
-    psnr = tf.image.psnr(im1, im2, max_val=1.0)
-    with tf.compat.v1.Session() as sess:
-        return psnr.eval()
+#def is_psnr(path_original,path_recons):
+#    im1 = tf.io.decode_png(open(path_original,'rb').read(),channels=3)
+#    im2 = tf.io.decode_png(open(path_recons,'rb').read(),channels=3)
+#    im1 = tf.image.convert_image_dtype(im1, tf.float32)
+#    im2 = tf.image.convert_image_dtype(im2, tf.float32)
+#    psnr = tf.image.psnr(im1, im2, max_val=1.0)
+#    with tf.compat.v1.Session() as sess:
+#        return psnr.eval()
 
 
 def is_ms_ssim(path_original, path_recons):
@@ -88,7 +88,7 @@ def is_ms_ssim(path_original, path_recons):
     im2 = tf.io.decode_png(open(path_recons,'rb').read(),channels=1)
     im1 = tf.image.convert_image_dtype(im1, tf.float32)
     im2 = tf.image.convert_image_dtype(im2, tf.float32)
-    ms_ssim = tf.image.ssim_multiscale(im1, im2,255)
+    ms_ssim = tf.image.ssim_multiscale(im1, im2,1.0)
     with tf.compat.v1.Session() as sess:
         return ms_ssim.eval()
 
@@ -98,10 +98,12 @@ def paper_tf(paper,models,quality_range):
         for quality in quality_range:
             total_tc = 0
             total_td = 0
-            total_psnr = 0
             total_ms_ssim = 0
             total_ms_ssim_db = 0
             total_bpp = 0
+            total_ycrcb_psnr = 0
+            total_y_psnr = 0
+            total_rgb_psnr = 0
             for image in range(1, 25):
                 ### PATHS TO ORIGINAL, LATENT REPRESENTATION AND RECONSTRUCTED DATASET IMAGES ###
                 path_original = 'images/' + str(image) + '.png'
@@ -122,26 +124,27 @@ def paper_tf(paper,models,quality_range):
                 t2 = time.perf_counter()
                 td = t2-t1
                 ### QUALITY METRICS ###
-                total_tc += tc
-                total_td += td
-                psnr = is_psnr(path_original,path_recons)
                 ycrcb_psnr = is_ycrcb_psnr(path_original, path_recons)
                 y_psnr = is_y_psnr(path_original,path_recons)
                 rgb_psnr = is_rgb_psnr(path_original,path_recons)
-                total_psnr += psnr
-                ms_ssim = is_ms_ssim(path_original,path_recons)
-                total_ms_ssim += ms_ssim
+                ms_ssim = is_ms_ssim(path_original, path_recons)
                 ms_ssim_db = -10 * log10(1 - ms_ssim)
+                bpp = (os.path.getsize(path_latent) * 8) / (768 * 512)
+                     # TOTALS #
+                total_ycrcb_psnr +=ycrcb_psnr
+                total_y_psnr += y_psnr
+                total_rgb_psnr += rgb_psnr
+                total_ms_ssim += ms_ssim
                 total_ms_ssim_db += ms_ssim_db
-                bpp = (os.path.getsize(path_latent)*8)/(768*512)
                 total_bpp += bpp
+                total_tc += tc
+                total_td += td
                 ### PRINT LOG ###
                 print('\n########################################')
                 print('MODEL = ' + model + quality)
                 print('IMAGE = '+ str(image) + '.png')
                 print('COMPRESSING TIME = ' + str(tc) )
                 print('DECOMPRESSING TIME = ' + str(td))
-                print('PSNR TF= ' + str(psnr))
                 print('PSNR YCbCR= ' + str(ycrcb_psnr))
                 print('PSNR Y = ' + str(y_psnr))
                 print('PSNR RGB = ' + str(rgb_psnr))
@@ -154,19 +157,23 @@ def paper_tf(paper,models,quality_range):
             print('KODADK DATASET' )
             print('TOTAL COMPRESSING TIME = ' + str(total_tc/24))
             print('TOTAL DECOMPRESSING TIME = ' + str(total_td/24))
-            print('TOTAL PSNR = ' + str(total_psnr/24))
+            print('TOTAL PSNR YCbCR = ' + str(total_ycrcb_psnr/ 24))
+            print('TOTAL PSNR Y = ' + str(total_y_psnr / 24))
+            print('TOTAL PSNR RGB = ' + str(total_rgb_psnr / 24))
             print('TOTAL MS-SSIM = ' + str(total_ms_ssim/24))
             print('TOTAL MS-SSIM(DB) = ' + str(total_ms_ssim_db/24))
             print('TOTAL BPP = ' + str(total_bpp/24))
             print('########################################\n')
-            models_metrics[model + quality]['PSNR'] = (total_psnr/24)
+            models_metrics[model + quality]['PSNR RGB'] = (total_rgb_psnr/24)
+            models_metrics[model + quality]['PSNR YCbCr'] = (total_ycrcb_psnr/24)
+            models_metrics[model + quality]['PSNR Y'] = (total_y_psnr/24)
+            models_metrics[model + quality]['MS-SSIM'] = (total_ms_ssim/24)
+            models_metrics[model + quality]['MS-SSIM (DB)'] = (total_ms_ssim_db/24)
+            models_metrics[model + quality]['BPP'] = (total_bpp/24)
             models_metrics[model + quality]['TC'] = (total_tc/24)
             models_metrics[model + quality]['TD'] = (total_td/24)
-            models_metrics[model + quality]['PSNR'] = (total_psnr/24)
-            models_metrics[model + quality]['MS-SSIM(db)'] = (total_ms_ssim_db/24)
-            models_metrics[model + quality]['BPP'] = (total_bpp/24)
-        print(models_metrics)
-
+            print(models_metrics)
+    pd.DataFrame(models_metrics).fillna('').to_csv('modeltensorflow/' + paper + '/' + paper + '.csv')
 
 
 
